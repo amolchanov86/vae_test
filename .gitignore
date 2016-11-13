@@ -1,0 +1,14 @@
+*~
+*.user
+*.user.*
+.log
+.fuse_hidden*
+data_root*
+data_dir
+*.swp
+data
+results
+cur_result
+temp_results
+*.pyc
+.idea
