@@ -69,7 +69,8 @@ class NNbase(object):
             raise ValueError('XAVIER_W: shape is neither 2 nor 4 dimensional !')
 
         initial = NNbase.xavier_init(shape, n_inputs=num_in, n_outputs=num_out, uniform=uniform)
-        weights = tf.Variable(initial, name=name)
+        # weights = tf.Variable(initial, name=name)
+        weights = tf.get_variable(name, initializer=initial)
         tf.add_to_collection('weights', weights)
         hist_summary = tf.histogram_summary("hist/" + tf.get_variable_scope().name + "/" + name, weights)
 
@@ -79,7 +80,8 @@ class NNbase(object):
 
     def bias_variable(self, shape, name="B", init_bias=0.1):
         initial = tf.constant(init_bias, shape=shape)
-        biases = tf.Variable(initial, name=name)
+        # biases = tf.Variable(initial, name=name)
+        biases = tf.get_variable(name, initializer=initial)
         tf.add_to_collection('weights', biases)
         hist_summary = tf.histogram_summary("hist/" + tf.get_variable_scope().name + "/" + name, biases)
 

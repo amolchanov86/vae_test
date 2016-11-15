@@ -85,12 +85,12 @@ class VAE(NNbase):
 
 
     ## Decoder net
-    def decoder_net(self, layers, batch_norm=False, debug=True):
+    def decoder_net(self, input, layers, batch_norm=False, debug=True):
         # Necessary parameters
         x_post_shape = self.x_postproc.get_shape().as_list()
 
         # Take converted sample
-        prev_lyr = self.z
+        prev_lyr = input
 
         # Building layers
         # Every previous layer should be flattened before entering here
@@ -106,14 +106,14 @@ class VAE(NNbase):
 
         # --- Creating output space
         # Reconstructed input
-        self.x_rec = tf.nn.sigmoid(self.fc_lyr(prev_lyr,
+        x_rec = tf.nn.sigmoid(self.fc_lyr(prev_lyr,
                                 out_num=x_post_shape[1],
                                 name="x_rec_logit",
                                 keep_prob=self.keep_prob,
                                 batch_norm=batch_norm,
                                 activation_on=False,
                                 phase_train=self.phase_train), name='x_rec')
-        return self.x_rec
+        return x_rec
 
 
     ## Preinitialization (defines inputs)
@@ -156,22 +156,27 @@ class VAE(NNbase):
                                         - n_z
                                         - tf.reduce_sum(self.z_log_sigma2, 1),
                                                 0, name='loss_enc')
+            tf.scalar_summary("loss/loss_enc", self.loss_enc)
+            tf.add_to_collection('losses', self.loss_enc)
+            tf.add_to_collection('w_losses', self.loss_enc)
 
-            # self.loss_dec = 0.5 * tf.reduce_mean(tf.square(tf.sub(self.x_postproc, self.x_rec, name='error')), name='loss_rec') / self.x_rec_sigma2
+            self.loss_dec = []
+            for samp_i in range(0, self.samples_num):
+                if self.rec_distrib == 'gaus':
+                    print('Gaussian distribution for reconstruction is used ...')
+                    self.loss_dec.append(0.5
+                                         * (1.0 / self.samples_num)
+                                         * tf.reduce_mean(tf.square(tf.sub(self.x_postproc, self.x_rec[samp_i], name='error%d' % samp_i)), name='loss_rec%d' % samp_i)
+                                         / self.x_rec_sigma2)
+                else:
+                    print('Bernoulli distribution for reconstruction is used ...')
+                    self.loss_dec.append(-(1.0 / self.samples_num) * tf.reduce_sum(self.x_postproc * tf.log(1e-10 + self.x_rec[samp_i])
+                                    + (1 - self.x_postproc) * tf.log(1e-10 + 1 - self.x_rec[samp_i]), name='loss_dec%d' % samp_i))
 
-            self.loss_dec = -tf.reduce_sum(self.x_postproc * tf.log(1e-10 + self.x_rec)
-                            + (1 - self.x_postproc) * tf.log(1e-10 + 1 - self.x_rec))
+                tf.add_to_collection('losses', self.loss_dec[samp_i])
+                tf.add_to_collection('w_losses', self.loss_dec[samp_i])
+                tf.scalar_summary("loss/loss_dec%d" % samp_i, self.loss_dec[samp_i])
 
-        tf.scalar_summary("loss/loss_enc", self.loss_enc)
-        tf.scalar_summary("loss/loss_dec", self.loss_dec)
-
-        tf.add_to_collection('losses', self.loss_enc)
-        tf.add_to_collection('losses', self.loss_dec)
-
-        # Weighted losses will be just summed up together
-        # to create the final loss for optimization
-        tf.add_to_collection('w_losses', self.loss_enc)
-        tf.add_to_collection('w_losses', self.loss_dec)
 
     ## Initialization of metrics
     def init_metrics(self):
@@ -236,8 +241,8 @@ class VAE(NNbase):
             z_mu = np.random.normal(size=self.architecture["n_z"])
         # Note: This maps to mean of distribution, we could alternatively
         # sample from Gaussian distribution
-        x_rec = self.sess.run(self.x_rec,
-                                feed_dict={self.z: z_mu,
+        x_rec = self.sess.run(self.x_rec[0],
+                                feed_dict={self.z[0]: z_mu,
                                 self.keep_prob: 1.0,
                                 self.phase_train: False})
         inf_time = time.time() - start_time_inference
@@ -246,7 +251,7 @@ class VAE(NNbase):
     def reconstruct(self, X):
         """ Use VAE to reconstruct given data. """
         start_time_inference = time.time()
-        x_rec = self.sess.run(self.x_rec,
+        x_rec = self.sess.run(self.x_rec[0],
                                 feed_dict = {self.x: X,
                                 self.keep_prob: 1.0,
                                 self.phase_train: False})
@@ -261,6 +266,7 @@ class VAE(NNbase):
     # @param input_shape  [h,w] of the input features
     # @param architecture   dictionary ('encoder','decoder', 'n_z') containing lists of number of neurons in every layer
     def __init__(self, input_shape=None, architecture=None, batch_size=100, learning_rate=1e-3,
+                 samples_num = 1, rec_distrib='gaus', x_rec_sigma2=1e-6,
                  batch_norm=False, debug=True,
                  weight_decay=0.0005, weight_norm='l2',
                  init=True):
@@ -274,9 +280,11 @@ class VAE(NNbase):
         # Init
         if init:
             # Parameters
-            self.x_rec_sigma2 = 1 # Reconstruction sigma
+            self.x_rec_sigma2 = x_rec_sigma2 # Reconstruction sigma
             self.learning_rate = learning_rate # Initial learning rate
             self.architecture = architecture
+            self.samples_num = samples_num # Number of samples used for X probability approximation (in reconstruction loss loss)
+            self.rec_distrib = rec_distrib # Type of reconstruction distribution used
 
             # --- Architecture initialization
             # Creating inputs and groundtruth placeholders
@@ -288,27 +296,37 @@ class VAE(NNbase):
             self.x_postproc = self.preproc(self.x, mean_values=[0])
 
             # Initilization of net architecture
-            self.encoder_net(n_z=architecture['n_z'],
-                             layers=architecture['encoder'],
-                             batch_norm=batch_norm, debug=debug)
+            with tf.variable_scope("encoder"):
+                self.encoder_net(n_z=architecture['n_z'],
+                                 layers=architecture['encoder'],
+                                 batch_norm=batch_norm, debug=debug)
 
             # Drawing samples for decoder (just 1 sample for now)
-            self.eps = tf.random_normal(shape=(self.batch_size, architecture['n_z']),
-                                   mean=0, stddev=1,
-                                   dtype=tf.float32, name='eps')
+            self.z = []
+            self.eps = []
+            for samp_i in range(0, self.samples_num):
+                self.eps.append(tf.random_normal(shape=(self.batch_size, architecture['n_z']),
+                                       mean=0, stddev=1,
+                                       dtype=tf.float32, name='eps%d' % samp_i))
 
-            # Transforming eps to z (according to re-parametrization trick)
-            # z = mu + sigma*epsilon
-            self.z = tf.add(self.z_mean,
-                            tf.mul(tf.sqrt(tf.exp(self.z_log_sigma2)), self.eps, name='sigmaXeps'), name='z')
+                # Transforming eps to z (according to re-parametrization trick)
+                # z = mu + sigma*epsilon
+                self.z.append(tf.add(self.z_mean,
+                                tf.mul(tf.sqrt(tf.exp(self.z_log_sigma2)), self.eps[samp_i], name='sigmaXeps%d' % samp_i), name='z%d' % samp_i))
 
             # Decoder (generator or reconstruction) network
-            self.decoder_net(layers=architecture['decoder'],
-                             batch_norm=batch_norm, debug=debug)
+            self.x_rec = []
+            with tf.variable_scope("decoder") as scope:
+                for samp_i in range(0, self.samples_num):
+                    # Share variables s.t. we would optimize a single network
+                    if samp_i > 0:
+                        scope.reuse_variables()
+                    self.x_rec.append(self.decoder_net(input=self.z[samp_i],
+                                     layers=architecture['decoder'],
+                                     batch_norm=batch_norm, debug=debug))
 
             # Initialization of training (losses, optimizer etc.)
             self.init_training(weight_decay=weight_decay, weight_norm=weight_norm)
-
 
             # --- Other initialization and printing
             # Reporting statistics:

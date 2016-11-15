@@ -79,7 +79,7 @@ def main():
 
     # Start training
     vae = train(network_architecture=architecture,
-                training_epochs=20,
+                training_epochs=15,
                 display_step=1)
 
     # Testing
