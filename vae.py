@@ -3,7 +3,6 @@
 from nnet_base import *
 import time
 import numpy as np
-import matplotlib as plt
 
 class VAE(NNbase):
     """
@@ -12,12 +11,25 @@ class VAE(NNbase):
     ## Activation function wrapper
     def activation(self, input, name):
         return tf.nn.elu(input, name=name)
+        # return tf.nn.softplus(input, name=name)
 
     ## Preprocessing of features
     def preproc(self, input, mean_values=[0]):
+        ## Flatenning
+        input_shape = input.get_shape().as_list()
+        if len(input_shape) > 2:
+            if len(input_shape) == 4:
+                input = tf.reshape(input, [-1, input_shape[1] * input_shape[2] * input_shape[3]])
+            elif len(input_shape) == 3:
+                input = tf.reshape(input, [-1, input_shape[1] * input_shape[2]])
+
         ## Preprocessing
         with tf.variable_scope('preproc'):
-            return tf.nn.bias_add(input, [-1 * x for x in mean_values], name='mean_sub')
+            input_shape = input.get_shape().as_list()
+            if len(mean_values) == 1:
+                mean_values = mean_values * np.ones([input_shape[-1]])
+            # return tf.nn.bias_add(input, [-1 * x for x in mean_values], name='mean_sub')
+            return tf.nn.bias_add(input, -mean_values, name='mean_sub')
 
     ## Encoder net
     def encoder_net(self, n_z, layers, batch_norm=False, debug=True):
@@ -47,13 +59,27 @@ class VAE(NNbase):
                                 phase_train=self.phase_train)
 
         # log(sigma^2) of latent variables (here I use relu to get rid of negative part, since it can not be negative)
-        self.z_log_sigma2 = tf.relu(self.fc_lyr(prev_lyr,
+        self.z_log_sigma2 = tf.nn.relu(self.fc_lyr(prev_lyr,
                                         out_num=n_z,
                                         name="z_log_sigma2_logit",
                                         keep_prob=self.keep_prob,
                                         batch_norm=batch_norm,
                                         activation_on=False,
                                         phase_train=self.phase_train), name='z_log_sigma2')
+
+        # Printing shapes
+        if debug:
+            print ('Debug printing ...')
+            print ('z_mean shape = ', self.z_mean.get_shape().as_list())
+            print ('z_log_sigma2 shape = ', self.z_log_sigma2.get_shape().as_list())
+
+            self.z_mean = tf.Print(self.z_mean, [tf.shape(self.z_mean)],
+                                 message='%s: shape = ' % 'z_mean',
+                                 summarize=4, first_n=1)
+
+            self.z_log_sigma2 = tf.Print(self.z_log_sigma2, [tf.shape(self.z_log_sigma2)],
+                                 message='%s: shape = ' % 'z_log_sigma2',
+                                 summarize=4, first_n=1)
 
         return (self.z_mean, self.z_log_sigma2)
 
@@ -80,8 +106,8 @@ class VAE(NNbase):
 
         # --- Creating output space
         # Reconstructed input
-        self.x_rec = 255 * tf.sigmoid( self.fc_lyr(prev_lyr,
-                                out_num=x_post_shape,
+        self.x_rec = tf.nn.sigmoid(self.fc_lyr(prev_lyr,
+                                out_num=x_post_shape[1],
                                 name="x_rec_logit",
                                 keep_prob=self.keep_prob,
                                 batch_norm=batch_norm,
@@ -107,7 +133,7 @@ class VAE(NNbase):
         tf.add_to_collection('in', self.phase_train)
         tf.add_to_collection('in', self.keep_prob)
 
-        print 'Shape of ', 'input', ' ', self.x.get_shape()
+        print 'Shape of ', 'input', ' ', self.x.get_shape().as_list()
 
     ## Initializes reguralizer (if needed)
     def init_reguralizer(self, weight_decay, weight_norm='l2'):
@@ -126,11 +152,15 @@ class VAE(NNbase):
         with tf.variable_scope('loss'):
             # Encoder loss (latent loss)
             self.loss_enc = 0.5 * tf.reduce_sum(tf.reduce_sum(tf.exp(self.z_log_sigma2), 1)
-                                        + tf.reduce_sum(tf.square(self.z_mean),1)
+                                        + tf.reduce_sum(tf.square(self.z_mean), 1)
                                         - n_z
-                                        - tf.reduce_sum(self.z_log_sigma2, 1),  1, name='loss_enc')
+                                        - tf.reduce_sum(self.z_log_sigma2, 1),
+                                                0, name='loss_enc')
 
-            self.loss_dec = 0.5 * tf.reduce_mean(tf.square(tf.sub(self.x_postproc, self.x_rec, name='error')), name='loss_rec') / self.x_rec_sigma2
+            # self.loss_dec = 0.5 * tf.reduce_mean(tf.square(tf.sub(self.x_postproc, self.x_rec, name='error')), name='loss_rec') / self.x_rec_sigma2
+
+            self.loss_dec = -tf.reduce_sum(self.x_postproc * tf.log(1e-10 + self.x_rec)
+                            + (1 - self.x_postproc) * tf.log(1e-10 + 1 - self.x_rec))
 
         tf.scalar_summary("loss/loss_enc", self.loss_enc)
         tf.scalar_summary("loss/loss_dec", self.loss_dec)
@@ -148,10 +178,10 @@ class VAE(NNbase):
         print ('Metrics are not set up')
 
     ## Training initialization (defines losses and optimizer)
-    def init_training(self, weight_decay, weight_norm='l2'):
+    def init_training(self, weight_decay=0.0005, weight_norm='l2'):
         self.init_metrics()
         # self.init_reguralizer(weight_decay, weight_norm)
-        self.init_loss()
+        self.init_loss(self.architecture['n_z'])
 
         with tf.variable_scope('out'):
             # Final loss is a sum of weighted losses
@@ -230,8 +260,8 @@ class VAE(NNbase):
     ## Class constructor
     # @param input_shape  [h,w] of the input features
     # @param architecture   dictionary ('encoder','decoder', 'n_z') containing lists of number of neurons in every layer
-    def __init__(self, input_shape=None, architecture=None, learning_rate=1e-3,
-                 batch_norm=False, debug=False,
+    def __init__(self, input_shape=None, architecture=None, batch_size=100, learning_rate=1e-3,
+                 batch_norm=False, debug=True,
                  weight_decay=0.0005, weight_norm='l2',
                  init=True):
 
@@ -247,17 +277,18 @@ class VAE(NNbase):
             self.x_rec_sigma2 = 1 # Reconstruction sigma
             self.learning_rate = learning_rate # Initial learning rate
             self.architecture = architecture
-            self.batch_size = self.x.get_shape().as_list()[0]
 
             # --- Architecture initialization
             # Creating inputs and groundtruth placeholders
             self.create_inputs(input_shape, debug=debug)
+            # self.batch_size = self.x.get_shape().as_list()[0]
+            self.batch_size = batch_size
 
             # Preprocessing
             self.x_postproc = self.preproc(self.x, mean_values=[0])
 
             # Initilization of net architecture
-            self.encoder_net(self, n_z=architecture['n_z'],
+            self.encoder_net(n_z=architecture['n_z'],
                              layers=architecture['encoder'],
                              batch_norm=batch_norm, debug=debug)
 
@@ -292,4 +323,4 @@ class VAE(NNbase):
 
             # Initializing all tensors (variables)
             print 'NNET: Initializing all variables ...'
-            tf.initialize_all_variables()
+            self.sess.run(tf.initialize_all_variables())

@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 import argparse
-
+from matplotlib import pyplot as plt
 from vae import *
+
 
 # Loading MNIST
 from tensorflow.examples.tutorials.mnist import input_data
@@ -13,17 +14,18 @@ np.random.seed(0)
 tf.set_random_seed(0)
 
 
-def train(network_architecture, learning_rate=0.001,
+def train(network_architecture, learning_rate=1e-3,
           batch_size=100, training_epochs=10, display_step=5):
 
-    vae = VAE(input_shape=(None, 28, 28),
+    vae = VAE(input_shape=(None, 784),
              architecture=network_architecture,
+             batch_size=batch_size,
              learning_rate=learning_rate,
              batch_norm=False,
              debug=True)
 
     params = {}
-    params['keep_prob'] = 0.5
+    params['keep_prob'] = 1.0
 
     # Training cycle
     for epoch in range(training_epochs):
@@ -48,19 +50,21 @@ def train(network_architecture, learning_rate=0.001,
 
 def test_reconstruct(vae):
     x_sample = mnist.test.next_batch(100)[0]
-    x_reconstruct = vae.reconstruct(x_sample)
+    x_rec, x_rec_inftime = vae.reconstruct(x_sample)
+    print('Test rec: sample shape = ', x_sample.shape, ' x_rec_shape = ', x_rec.shape)
 
     plt.figure(figsize=(8, 12))
     for i in range(5):
         plt.subplot(5, 2, 2 * i + 1)
-        plt.imshow(x_sample[i].reshape(28, 28), vmin=0, vmax=1)
+        plt.imshow(x_sample[i][:].reshape(28, 28), vmin=0, vmax=1)
         plt.title("Test input")
         plt.colorbar()
         plt.subplot(5, 2, 2 * i + 2)
-        plt.imshow(x_reconstruct[i].reshape(28, 28), vmin=0, vmax=1)
+        plt.imshow(x_rec[i][:].reshape(28, 28), vmin=0, vmax=1)
         plt.title("Reconstruction")
         plt.colorbar()
     plt.tight_layout()
+    plt.show(block=True)
 
 
 def main():
@@ -74,7 +78,9 @@ def main():
     architecture['n_z'] = 20
 
     # Start training
-    vae = train(network_architecture=architecture)
+    vae = train(network_architecture=architecture,
+                training_epochs=20,
+                display_step=1)
 
     # Testing
     test_reconstruct(vae)

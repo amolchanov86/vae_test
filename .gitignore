@@ -12,3 +12,4 @@ cur_result
 temp_results
 *.pyc
 workspace.xml
+MNIST_data/
