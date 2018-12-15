@@ -3,7 +3,6 @@ import argparse
 from matplotlib import pyplot as plt
 from vae import *
 
-
 # Loading MNIST
 from tensorflow.examples.tutorials.mnist import input_data
 mnist = input_data.read_data_sets('MNIST_data', one_hot=True)
@@ -44,14 +43,14 @@ def train(network_architecture, learning_rate=1e-3,
 
         # Display logs per epoch step
         if epoch % display_step == 0:
-            print "Epoch:", '%04d' % (epoch+1), \
-                  "cost=", "{:.9f}".format(avg_cost)
+            print("Epoch:", '%04d' % (epoch+1), \
+                  "cost=", "{:.9f}".format(avg_cost))
     return vae
 
 def test_reconstruct(vae):
     x_sample = mnist.test.next_batch(100)[0]
     x_rec, x_rec_inftime = vae.reconstruct(x_sample)
-    print('Test rec: sample shape = ', x_sample.shape, ' x_rec_shape = ', x_rec.shape)
+    print(('Test rec: sample shape = ', x_sample.shape, ' x_rec_shape = ', x_rec.shape))
 
     plt.figure(figsize=(8, 12))
     for i in range(5):

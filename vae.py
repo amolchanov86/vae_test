@@ -1,17 +1,16 @@
-
-
-from nnet_base import *
+# from nnet_base import *
 import time
 import numpy as np
+import tensorflow as tf
+from nnet_base import NNbase
 
 class VAE(NNbase):
     """
-        NN class for VAE
+    NN class for Variational Autoencoder
     """
     ## Activation function wrapper
     def activation(self, input, name):
         return tf.nn.elu(input, name=name)
-        # return tf.nn.softplus(input, name=name)
 
     ## Preprocessing of features
     def preproc(self, input, mean_values=[0]):
@@ -28,7 +27,6 @@ class VAE(NNbase):
             input_shape = input.get_shape().as_list()
             if len(mean_values) == 1:
                 mean_values = mean_values * np.ones([input_shape[-1]])
-            # return tf.nn.bias_add(input, [-1 * x for x in mean_values], name='mean_sub')
             return tf.nn.bias_add(input, -mean_values, name='mean_sub')
 
     ## Encoder net
@@ -48,7 +46,7 @@ class VAE(NNbase):
 
             prev_lyr = h_fc_drop
 
-        # --- Creating latent space
+        ## Creating latent space
         # Mean of latent variables
         self.z_mean = self.fc_lyr(prev_lyr,
                                 out_num=n_z,
@@ -70,8 +68,8 @@ class VAE(NNbase):
         # Printing shapes
         if debug:
             print ('Debug printing ...')
-            print ('z_mean shape = ', self.z_mean.get_shape().as_list())
-            print ('z_log_sigma2 shape = ', self.z_log_sigma2.get_shape().as_list())
+            print(('z_mean shape = ', self.z_mean.get_shape().as_list()))
+            print(('z_log_sigma2 shape = ', self.z_log_sigma2.get_shape().as_list()))
 
             self.z_mean = tf.Print(self.z_mean, [tf.shape(self.z_mean)],
                                  message='%s: shape = ' % 'z_mean',
@@ -104,7 +102,7 @@ class VAE(NNbase):
 
             prev_lyr = h_fc_drop
 
-        # --- Creating output space
+        ## Creating output space
         # Reconstructed input
         x_rec = tf.nn.sigmoid(self.fc_lyr(prev_lyr,
                                 out_num=x_post_shape[1],
@@ -133,7 +131,7 @@ class VAE(NNbase):
         tf.add_to_collection('in', self.phase_train)
         tf.add_to_collection('in', self.keep_prob)
 
-        print 'Shape of ', 'input', ' ', self.x.get_shape().as_list()
+        print('Shape of ', 'input', ' ', self.x.get_shape().as_list())
 
     ## Initializes reguralizer (if needed)
     def init_reguralizer(self, weight_decay, weight_norm='l2'):
@@ -156,7 +154,7 @@ class VAE(NNbase):
                                         - n_z
                                         - tf.reduce_sum(self.z_log_sigma2, 1),
                                                 0, name='loss_enc')
-            tf.scalar_summary("loss/loss_enc", self.loss_enc)
+            tf.summary.scalar("loss/loss_enc", self.loss_enc)
             tf.add_to_collection('losses', self.loss_enc)
             tf.add_to_collection('w_losses', self.loss_enc)
 
@@ -166,7 +164,7 @@ class VAE(NNbase):
                     print('Gaussian distribution for reconstruction is used ...')
                     self.loss_dec.append(0.5
                                          * (1.0 / self.samples_num)
-                                         * tf.reduce_mean(tf.square(tf.sub(self.x_postproc, self.x_rec[samp_i], name='error%d' % samp_i)), name='loss_rec%d' % samp_i)
+                                         * tf.reduce_mean(tf.square(tf.subtract(self.x_postproc, self.x_rec[samp_i], name='error%d' % samp_i)), name='loss_rec%d' % samp_i)
                                          / self.x_rec_sigma2)
                 else:
                     print('Bernoulli distribution for reconstruction is used ...')
@@ -175,7 +173,7 @@ class VAE(NNbase):
 
                 tf.add_to_collection('losses', self.loss_dec[samp_i])
                 tf.add_to_collection('w_losses', self.loss_dec[samp_i])
-                tf.scalar_summary("loss/loss_dec%d" % samp_i, self.loss_dec[samp_i])
+                tf.summary.scalar("loss/loss_dec%d" % samp_i, self.loss_dec[samp_i])
 
 
     ## Initialization of metrics
@@ -198,7 +196,7 @@ class VAE(NNbase):
             # self.train_step = tf.train.AdagradOptimizer(1e-3).minimize(self.loss)
             # self.train_step = tf.train.GradientDescentOptimizer(1e-3).minimize(self.loss)
 
-        tf.scalar_summary("loss/loss", self.loss)
+        tf.summary.scalar("loss/loss", self.loss)
         tf.add_to_collection('out', self.loss)
 
         tf.add_to_collection('train', self.train_step)
@@ -312,7 +310,7 @@ class VAE(NNbase):
                 # Transforming eps to z (according to re-parametrization trick)
                 # z = mu + sigma*epsilon
                 self.z.append(tf.add(self.z_mean,
-                                tf.mul(tf.sqrt(tf.exp(self.z_log_sigma2)), self.eps[samp_i], name='sigmaXeps%d' % samp_i), name='z%d' % samp_i))
+                                tf.multiply(tf.sqrt(tf.exp(self.z_log_sigma2)), self.eps[samp_i], name='sigmaXeps%d' % samp_i), name='z%d' % samp_i))
 
             # Decoder (generator or reconstruction) network
             self.x_rec = []
@@ -330,15 +328,15 @@ class VAE(NNbase):
 
             # --- Other initialization and printing
             # Reporting statistics:
-            print 'NNET: Parameters num = ', self.params_num # Number of parameters in the network
+            print('NNET: Parameters num = ', self.params_num) # Number of parameters in the network
 
             # start session
-            print 'NNET: Initializing default session ...'
+            print('NNET: Initializing default session ...')
             self.sess = tf.InteractiveSession()
 
             # All summaries
-            self.summary_all = tf.merge_all_summaries()
+            self.summary_all = tf.summary.merge_all()
 
             # Initializing all tensors (variables)
-            print 'NNET: Initializing all variables ...'
+            print('NNET: Initializing all variables ...')
             self.sess.run(tf.initialize_all_variables())
